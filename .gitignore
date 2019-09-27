@@ -1,9 +1,14 @@
+# other files
+*.html
+bayes_reg_rstanarm_files/
+
 # History files
 .Rhistory
 .Rapp.history
 
 # Session Data files
 .RData
+*.Rproj
 
 # Example code in package build process
 *-Ex.R
