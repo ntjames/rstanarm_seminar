@@ -18,7 +18,7 @@ description: "Intro to Bayes Regression with rstanarm"
 ```{r setup, include=FALSE}
 rm(list=ls())
 knitr::opts_chunk$set(echo = TRUE)
-#knitr::opts_knit$set(root.dir=file.path("/home/nathan/Dropbox/njames/school/PhD/misc/stat_computing_seminar/rstanarm_seminar"))
+knitr::opts_knit$set(root.dir=file.path("/home/nathan/Dropbox/njames/school/PhD/misc/stat_computing_seminar/rstanarm_seminar"))
 
 #add path to pdflatex (http://stackoverflow.com/questions/30601171/add-tex-path-to-r-studio-ubuntu)
 #Sys.setenv(PATH = paste(Sys.getenv("PATH"), "/usr/local/texlive/2016/bin/x86_64-linux/", sep=":"))
@@ -33,63 +33,83 @@ The Bayesian paradigm has become increasingly popular, but is still not as wides
 
 Bayesian inference provides a principled method of combining prior information concerning parameters (such as regression coefficients) with observed outcome and covariate data based on Bayes' Theorem: 
 \begin{equation}
-p(\theta|X, y)=\frac{p(\theta)p(y|X, \theta)}{\int p(\theta)p(y|X, \theta)\,d\theta}
+\underbrace{p(\theta|X, y)}_\text{posterior distribution}=\frac{\overbrace{p(\theta)}^\text{prior} \, \overbrace{p(y|X, \theta)}^\text{likelihood} }{ \underbrace{\int p(\theta)p(y|X, \theta)\,d\theta}_\text{marginal likelihood}}\\
 \end{equation}
-For regression modeling, $p(y|\theta, X)$ in this equation is the likelihood from the sampling model and $p(\theta)$ represents prior information (or absence of information) about the parameters. The combination of these two components yields the posterior probability $p(\theta|y, X)$ which represents an updated distribution for the parameters conditional on the observed data. Performing inference for regression models in a Bayesian framework has several advantages:
-
-* Ability to answer inferential questions using interpretable posterior probability statements rather than hypothesis tests and p-values which are dominant in the frequentist paradigm (e.g., "Given our model, prior knowledge, and the observed data, there is a 91% probability that the drug is effective")
+The likelihood (aka sampling distribution) $p(y|X, \theta)$ represents the contribution from the observed data and $p(\theta)$ represents prior information (or absence of information) about the parameters. The combination of these two components yields the posterior probability $p(\theta|y, X)$ which represents an updated distribution for the parameters conditional on the observed data. Note that if $y$ is fixed the marginal likelihood is constant with respect to $\theta$, so we can write the equation above in terms of the unnormalized posterior distribution: $p(\theta|X, y) \propto p(\theta) p(y|X, \theta)$. Performing inference for regression models in a Bayesian framework has several advantages:
 
 * Can formally incorporate information from multiple sources including prior information if available
 
-* All inference proceeds directly from the posterior distribution
+* Inference is conditional on *actual* observed data, rather than data that *could have* been observed
+
+* Can answer inferential questions using interpretable posterior probability statements rather than hypothesis tests and p-values which are dominant in the frequentist paradigm (e.g., "Given our model, prior knowledge, and the observed data, there is a 92% probability that the drug is effective")
+
+* All inference proceeds *directly* from the posterior distribution
 
 ### Stan, rstan, and rstanarm
 
-[Stan](https://mc-stan.org/) is a general purpose probabilistic programming language for Bayesian statistical inference. It has interfaces for many popular data analysis languages including `Python`, `MATLAB`, and `Stata`. The `R` interface for `Stan` is called `rstan` and `rstanarm` is a front-end to `rstan` that allows regression models to be fit using a standard `R` regression model interface. 
+[Stan](https://mc-stan.org/) is a general purpose probabilistic programming language for Bayesian statistical inference. It has interfaces for many popular data analysis languages including `Python`, `MATLAB`, `Julia`, and `Stata`. The `R` interface for `Stan` is called `rstan` and `rstanarm` is a front-end to `rstan` that allows regression models to be fit using a standard `R` regression model interface. 
 
 ```{r load_lib, message=FALSE}
-# install.packages("rstanarm") # may take a while to install
+# install.packages("rstanarm") # may take a while
 library(rstan)
 library(rstanarm)
-```
+library(ggplot2)
+library(bayesplot)
 
+# this option uses multiple cores if they're available
+options(mc.cores = parallel::detectCores()) 
+```
 
 ### Steps for Bayesian inference
 
-1. Specify the probability model. The model has two parts, a likelihood for the observed data and a prior distribution. In practice, the form of the likelihood is often based on the outcome type and is often the same as a frequentist analysis. Specifying the prior distribution can be more involved, but `rstanarm` includes default priors that work well in many cases.
+1. Specify the probability model. As discussed above the model has two parts, a likelihood for the observed data and a prior distribution. In practice, the form of the likelihood is usually based on the outcome type and is often the same as a frequentist analysis. Specifying the prior distribution can be more involved, but `rstanarm` includes default priors that work well in many cases.
 
 2. Draw samples from the posterior distribution. Once the model is specified, we need to get an updated distribution of the parameters conditional on the observed data. Conceptually, this step is simple, but in practice it can be quite complicated. By default, `Stan` uses a method called Markov Chain Monte Carlo (MCMC) to get these samples.
 
 3. Evaluate the model. There are several important checks that are necessary to ensure that there are no problems with the MCMC procedure used to get samples or the posterior distribution.
 
-4. Perform inference. Once we have verified that every looks good with our model and MCMC sampling procedure, we can use the samples to perform inference on any quantity involving the posterior parameter distribution.
+4. Perform inference. Once we have verified that everything looks good with our model and MCMC sampling, we can use the samples to perform inference on any quantity involving the posterior parameter distribution.
 
 ## Linear Regression model with continuous outcome
 
 Let's see how to apply these steps for a linear regression model. We'll use the simple `cars` dataset which gives the speed of 50 cars along with the corresponding stopping distances.
 
 ```{r plt_cars, fig.align='center'}
-library(ggplot2)
 qplot(speed, dist, data=cars)
 ```
 
-1. Specify the probability model. For this example, assume the usual linear regression model where each outcome observation (`dist`) is conditionally normal given the covariate (`speed`) with independent errors, $\text{dist} = \beta_0 + \beta_1\cdot \text{speed} + \varepsilon$, $\varepsilon \sim N(0,\sigma^2)$. This implies the posterior will have 3 parameters, $\beta_0$, $\beta_1$ and $\sigma^2$. We will let `rstanarm` use the default priors for now to complete the model specification.
+1. Specify the probability model. For this example, assume the usual linear regression model where each outcome observation (`dist`) is conditionally normal given the covariate (`speed`) with independent errors, $\text{dist} = \beta_0 + \beta_1\cdot \text{speed} + \varepsilon$, $\, \varepsilon \sim N(0,\sigma^2)$. This implies the posterior will have 3 parameters, $\beta_0$, $\beta_1$ and $\sigma^2$. We will let `rstanarm` use the default priors for now to complete the probability model specification.
 
-2. Draw samples from the posterior distribution. We can use the `rstanarm` function `stan_glm()` to draw samples from the posterior using the model above. 
+2. Draw samples from the posterior distribution. We can use the `rstanarm` function `stan_glm()` to draw samples from the posterior using the model above.  Comparing the documentation for the `stan_glm()` function and the `glm()` function in base `R`, we can see the main arguments are identical. 
+
+```
+stan_glm(formula, family = gaussian(), data, weights, subset,
+  na.action = NULL, offset = NULL, model = TRUE, x = FALSE,
+  y = TRUE, contrasts = NULL, ..., prior = normal(),
+  prior_intercept = normal(), prior_aux = exponential(),
+  prior_PD = FALSE, algorithm = c("sampling", "optimizing",
+  "meanfield", "fullrank"), mean_PPD = algorithm != "optimizing",
+  adapt_delta = NULL, QR = FALSE, sparse = FALSE)
+  
+glm(formula, family = gaussian, data, weights, subset,
+    na.action, start = NULL, etastart, mustart, offset,
+    control = list(...), model = TRUE, method = "glm.fit",
+    x = FALSE, y = TRUE, singular.ok = TRUE, contrasts = NULL, ...)
+```
+
+The actual model can be fit with a single line of code.
 
 ```{r fit_cars, cache=TRUE, message=FALSE}
-# this option uses multiple cores if they're available
-options(mc.cores = parallel::detectCores()) 
 glm_post1 <- stan_glm(dist~speed, data=cars, family=gaussian)
 ```
 
-3. Evaluate the model. Two common checks for the MCMC sampler are trace plots and $\hat{R}$. We use the function `stan_trace()` to draw the trace plots which show sequential draws from the posterior distribution. Ideally we want the chains in each traceplot to be stable (centered around one value) and well-mixed (all chains are overlapping around the same value).
+3. Evaluate the model. Two common checks for the MCMC sampler are trace plots and $\hat{R}$. We use the function `stan_trace()` to draw the trace plots which show sequential draws from the posterior distribution. Ideally we want the chains in each trace plot to be stable (centered around one value) and well-mixed (all chains are overlapping around the same value).
 
-```{r diag_cars, fig.height=4, fig.width=10, fig.align='center'}
+```{r diag_cars, fig.height=4, fig.width=10.5, fig.align='center'}
 stan_trace(glm_post1, pars=c("(Intercept)","speed","sigma"))
 ```
 
-$\hat{R}$ uses estimates of variance within and between the chains to monitor convergence. At convergence $\hat{R}=1$.  Summarizing the model fit with `summary()` we see that $\hat{R}$ values are, in fact, 1 for all parameters. The output also gives us information about the model used and estimates of the posterior parameter distributions.
+$\hat{R}$ uses estimates of variance within and between the chains to monitor convergence; at convergence $\hat{R}=1$.  Summarizing the model fit with `summary()` we see that $\hat{R}$ values are, in fact, 1 for all parameters. The output also gives us information about the model used and estimates of the posterior parameter distributions.
 
 ```{r summ_cars}
 summary(glm_post1)
@@ -105,16 +125,16 @@ The dark blue line shows the observed data while the light blue lines are simula
 ```{r ppc_cars, fig.align="center"}
 pp_check(glm_post1)
 
-library(bayesplot)
-ppc_intervals(
-  y = cars$dist,
-  yrep = posterior_predict(glm_post1),
-  x = cars$speed)
+# another way to look at posterior predictive checks
+# ppc_intervals(
+#  y = cars$dist,
+#  yrep = posterior_predict(glm_post1),
+#  x = cars$speed)
 ```
 
 There are many other types of checks that can be explored interactively by running the `launch_shinystan()` function on the fit object.
 
-4. Perform inference. We can use the posterior samples to perform inference. Focusing on the `speed` parameter, we can first plot a histogram of the posterior samples.
+4. Perform inference. We can use the posterior samples to perform inference. Focusing on the `speed` parameter, we first plot a histogram of the posterior samples. The posterior for this coefficient is centered at around 4 and is symmetric.
 
 ```{r speed_hist_cars, fig.align="center"}
 stan_hist(glm_post1, pars=c("speed"), bins=40)
@@ -124,13 +144,13 @@ We can also extract these posterior samples to get an estimate of the mean and a
 
 ```{r inf_cars}
 post_samps_speed <- as.data.frame(glm_post1, pars=c("speed"))[,"speed"]
-mn_speed <- mean(post_samps_speed)
-ci_speed <- quantile(post_samps_speed, probs=c(0.05, 0.95))
+mn_speed <- mean(post_samps_speed) # posterior mean 
+ci_speed <- quantile(post_samps_speed, probs=c(0.05, 0.95)) # posterior 90% interval 
 ```
 
-The speed parameter is the slope of the regression line from the model defined above. The average change in stopping distance associated with a one unit change in speed is `r round(mn_speed,2)`. There is a 95% probability that the change in stopping distance associated with a one unit change in speed is between `r round(ci_speed[1],2)` and `r round(ci_speed[2],2)`. We can also use the posterior to calculate other values of interest, for example the probability that the change in stopping distance for a unit change in speed is greater than 3.5 is `r round(mean(post_samps_speed > 3.5),2)` (calculated using `mean(post_samps_speed > 3.5)`).
+The speed parameter is the slope of the regression line from the model defined above. The average change in stopping distance associated with a one unit change in speed is `r round(mn_speed,2)`. There is a 90% probability that the change in stopping distance associated with a one unit change in speed is between `r round(ci_speed[1],2)` and `r round(ci_speed[2],2)`. We can also use the posterior to calculate other values of interest, for example the probability that the change in stopping distance for a unit change in speed is greater than 3.5 is `r round(mean(post_samps_speed > 3.5),2)` (calculated using `mean(post_samps_speed > 3.5)`).
 
-Now, let's compare to a frequentist analysis. Under this paradigm, we can fit a linear regression model using `glm(..., family=gaussian)`.
+Now, let's compare to a frequentist analysis. We can find maximum likelihood estimates for the linear regression model using `glm(..., family=gaussian)`.
 
 ```{r lm_cars}
 glm_fit <- glm(dist~speed, data=cars, family=gaussian)
@@ -139,7 +159,7 @@ summary(glm_fit)
 
 The maximum likelihood estimates for the intercept and slope are `r round(coef(glm_fit)[1],2)` and `r round(coef(glm_fit)[2],2)` which are nearly identical to the Bayesian posterior median values of `r round(fixef(glm_post1)[1],2)` and `r round(fixef(glm_post1)[2],2)`.
 
-We can take a look at default priors used by `rstanarm` with the `prior_summary()` function. The intercept and coefficients both use a normal distribution centered around 0 as a prior, but the distribution for the intercept has higher variance (scale). The error term uses an exponential prior. 
+We can take a look at default priors used by `rstanarm` with the `prior_summary()` function. The intercept and coefficients both use a normal distribution centered around 0 as a prior, but the distribution for the intercept has higher variance (scale). The error term uses an exponential distribution as a prior. 
 
 ```{r prior_cars}
 prior_summary(glm_post1)
@@ -147,20 +167,20 @@ prior_summary(glm_post1)
 
 It can also be helpful to juxtapose intervals from the prior distribution and the posterior distribution to see how the observed data has changed the parameter estimates. 
 
-```{r prior_v_post_cars, cache=TRUE, fig.align="center"}
-posterior_vs_prior(glm_post1, group_by_parameter = TRUE)
+```{r prior_v_post_cars, cache=TRUE,  fig.width=4, fig.height=4, out.width = '48%', fig.show='hold', message=FALSE}
+posterior_vs_prior(glm_post1, group_by_parameter = TRUE, pars=c("(Intercept)"))
+posterior_vs_prior(glm_post1, group_by_parameter = TRUE, pars=c("speed","sigma"))
 ```
 
 We can use a different prior for the slope by changing the `prior` argument in the call to `stan_glm()`. Let's use a much more informative normal prior for the slope centered around 2 with variance 0.5.
 
 ```{r inf_prior_cars, cache=TRUE, message=FALSE}
-glm_post2 <- stan_glm(dist~speed, data=cars, family=gaussian, 
-                      prior=normal(2, 0.5, autoscale=FALSE))
+glm_post2 <- stan_glm(dist~speed, data=cars, family=gaussian, prior=normal(2, 0.5, autoscale=FALSE))
 ```
 
 The posterior estimate for the slope is adjusted toward the prior value.
 
-```{r prior_v_post_cars2, cache=TRUE, fig.align="center"}
+```{r prior_v_post_cars2, cache=TRUE, fig.align="center", message=FALSE}
 posterior_vs_prior(glm_post2, pars=c("speed"), group_by_parameter = TRUE)
 ```
 
@@ -181,6 +201,7 @@ summary(wells)
 wells$dist100 <- wells$dist / 100
 ```
 
+We'll use a logistic regression model for the likelihood with Student $t$ distributions centered around 0 for the intercept and covariate priors. For the first model, we only consider a single covariate, `dist100`, which is the distance from the well (in units of 100 meters).
 
 ```{r fit_wells1, cache=TRUE, message=FALSE, results="hide"}
 t_prior <- student_t(df = 7, location = 0, scale = 2.5)
@@ -189,6 +210,7 @@ glm_post3 <- stan_glm(switch ~ dist100, data = wells,
                  prior = t_prior, prior_intercept = t_prior)
 ```
 
+Plotting the median predicted posterior probability of switching as a function of distance, we see that increased distance does reduce the probability of switching, as would be expected.
 
 ```{r plt_wells1, fig.align="center"}
 # Predicted probability as a function of x
@@ -208,9 +230,13 @@ ggplot(wells, aes(x = dist100, y = switch, color = switch)) +
   theme(legend.position = "none")
 ```
 
+For the next model, we also add the covariate `arsenic` which is a measure of the arsenic level in the residents' well (before switching). We can use the `update()` function to change the formula statement and rerun the model.
+
 ```{r fit_wells2, cache=TRUE, message=FALSE, results="hide"}
-glm_post4 <- update(glm_post3, formula = switch ~ dist100 + arsenic, refresh=0) 
+glm_post4 <- update(glm_post3, formula = switch ~ dist100 + arsenic) 
 ```
+
+Now we plot the median predicted posterior probability of switching as a function of both distance and arsenic level. 
 
 ```{r plt_wells2, fig.align="center"}
 pr_switch2 <- function(x, y, ests) plogis(ests[1] + ests[2] * x + ests[3] * y)
@@ -224,9 +250,13 @@ ggplot(grid, aes(x = dist100, y = arsenic)) +
   ggtitle("Posterior Probability of switching by distance and arsenic level")
 ```
 
+Finally, we add in an interaction between distance and arsenic level so the change in the odds of switching associated with higher arsenic or farther distance depends on the value of the other covariate.
+
 ```{r fit_wells3, cache=TRUE, message=FALSE, results="hide"}
 glm_post5 <- update(glm_post3, formula = switch ~ dist100*arsenic) 
 ```
+
+Recreating the previous plot with the new model, it appears that those with very elevated arsenic levels only have a high probability of switching if they are also within about 200m of the safe public or private well.
 
 ```{r plt_wells3, fig.align="center"}
 pr_switch3 <- function(x, y, ests) plogis(ests[1] + ests[2] * x + ests[3] * y + ests[4]*x*y)
@@ -238,7 +268,7 @@ ggplot(grid, aes(x = dist100, y = arsenic)) +
   ggtitle("Posterior Probability of switching by distance and arsenic level (w/ interaction)")
 ```
 
-We can compare our three models using an approximation to Leave-One-Out (LOO) cross-validation, which is a method for estimating out of sample predictive performance and is implemented by the loo function in the loo package:
+We can compare our three models using an approximation to Leave-One-Out (LOO) cross-validation, which is a method for estimating out of sample predictive performance and is implemented by the `loo` function in the `loo` package:
 
 ```{r comp_wells, cache=TRUE}
 loo1 <- loo(glm_post3)
@@ -249,7 +279,7 @@ compare_models(loo1, loo2, loo3)
 
 Including `arsenic` gives much better estimated predictive performance than `dist100` alone, but the interaction model is similar to the model with separate linear terms only.
 
-```{r plt_wells_OR, fig.align="center"}
+```{r plt_wells_OR, fig.align="center", include=FALSE, eval=FALSE}
 post_samp_OR<-exp( as.data.frame(glm_post4, pars=c("dist100","arsenic")) )
 
 qplot(post_samp_OR[,"arsenic"],bins=40, xlab="posterior OR (arsenic)",ylab="")
@@ -261,26 +291,30 @@ qplot(post_samp_OR[,"dist100"],bins=40, xlab="posterior OR (distance)")
 
 ## Other rstanarm models
 
-stan_betareg() - beta regression models
-stan_biglm() - regularized linear but big models (data too large to fit in memery)
-stan_clogit() - conditional logistic regression models
-stan_gamm4() -  generalized linear additive models with optional group-specific terms
-stan_glmer() - generalized linear models with group-specific terms
-stan_lm() - regularized linear models
+stan_betareg() - beta regression models  
+stan_biglm() - regularized linear but big models (data too large to fit in memory)  
+stan_clogit() - conditional logistic regression models  
+stan_gamm4() -  generalized linear additive models with optional group-specific terms  
+stan_glmer() - generalized linear models with group-specific terms  
+stan_lm() - regularized linear models  
 stan_mvmer() - multivariate generalized linear models with correlated group-specific terms
-stan_nlmer() - nonlinear models with group-specific terms
-stan_polr() - ordinal regression models
-stan_jm() - joint longitudinal and time-to-event models
+stan_nlmer() - nonlinear models with group-specific terms  
+stan_polr() - ordinal regression models  
+stan_jm() - joint longitudinal and time-to-event models  
+
+## Troubleshooting
+
+If your get an error message or run into problems with your model checks, you can get help at the rstanarm [troubleshooting](http://mc-stan.org/rstanarm/articles/rstanarm.html#troubleshooting) page.
 
 ## Going beyond rstanarm
 
-### Checking & modifying underlying Stan code
+### Stan without rstanarm
 
 A good place to start is the first chapter of the Stan User's guide (https://mc-stan.org/users/documentation/).
 
 The `rstan` code to fit the first linear regression model is below:
 
-```{r stan_mod}
+```{r stan_mod, cache=TRUE, results="hide"}
 # define the stan model
 stan_model <-
 "
@@ -290,23 +324,23 @@ data {
   vector[N] y;
 }
 parameters {
-  real alpha;
-  real beta;
+  real beta0;
+  real beta1;
   real<lower=0> sigma;
 }
 model {
-  y ~ normal(alpha + beta * x, sigma);
+  y ~ normal(beta0 + beta1 * x, sigma);
 }
 "
 
 # format the data for stan
-stan_data <- list(N=nrow(cars),x=cars$speed, y=cars$dist)
-```
+stan_data <- list(N=nrow(cars), x=cars$speed, y=cars$dist)
 
-```{r stan_fit, cache=TRUE, results="hide"}
 # sample from the model
 glm_post_stan <- stan(model_code=stan_model, data=stan_data)
 ```
+
+We can perform the same model checks and posterior inference using the `rstan` model fit.
 
 ```{r stan_diag, fig.align="center"}
 mcmc_trace(glm_post_stan)
@@ -316,21 +350,21 @@ mcmc_trace(glm_post_stan)
 summary(glm_post_stan)$summary
 ```
 
-You can also get a sense for what is going on under the hood by looking at the stan model underlying any `rstanarm` model with the `get_stanmodel()` function.
+You can also get a sense for what is going on under the hood by looking at the stan model underlying any `rstanarm` model with the `get_stanmodel()` function, but be warned that this code is designed for efficiency rather than readability.
 
-```{r get_stanmodel}
+```{r get_stanmodel, eval=FALSE}
 # NOT run
-# get_stanmodel(glm_post1$stanfit)
+get_stanmodel(glm_post1$stanfit)
 ```
 
 ### Survival analysis
 
-The current production version of `rstanarm` (v 2.18.2) does not have a function for survival analysis. There are ongoing discussions about implementing survival models in `rstanarm` at
-https://discourse.mc-stan.org/t/survival-models-in-rstanarm/3998 and about the experimental function `stan_surv()`, currently on development branch of `rstanarm` at http://rstudio-pubs-static.s3.amazonaws.com/438966_3b8a25efb9b84454b8d69b7a15e3ebc5.html
+The current production version of `rstanarm` (v 2.18.2) does not have a function for survival analysis, but there are [ongoing discussions](https://discourse.mc-stan.org/t/survival-models-in-rstanarm/3998 ) about implementing survival models in `rstanarm`. You can also check details about the [experimental function](http://rstudio-pubs-static.s3.amazonaws.com/438966_3b8a25efb9b84454b8d69b7a15e3ebc5.html) `stan_surv()`, currently on development branch of `rstanarm`. 
 
-A good alternative is `brms` another front-end to `rstan` that also uses formula syntax and can fit many of the same models.
+A good alternative is `brms`, another front-end to `rstan` that also uses formula syntax and can fit many of the same models.
 
 ```{r fit_surv, eval=FALSE}
+# NOT run
 library(brms)
 # parametric survival analysis using the "weibull" family
 surv_post <- brm(time | cens(censored) ~ age + sex + disease, 
@@ -339,15 +373,21 @@ surv_post <- brm(time | cens(censored) ~ age + sex + disease,
 
 ## References
 
-rstanarm page on the Stan site:
+Code for this Rmd file is at:
+https://github.com/ntjames/rstanarm_seminar
+
+The `rstanarm` page on the Stan site:
 http://mc-stan.org/rstanarm/index.html
 
 A lot of this material is borrowed from the official `rstanarm` vignettes by Jonah Gabry and Ben Goodrich:  
 https://cran.r-project.org/web/packages/rstanarm/vignettes/rstanarm.html  
-
 https://cran.r-project.org/web/packages/rstanarm/vignettes/continuous.html
-
 https://cran.rstudio.com/web/packages/rstanarm/vignettes/binomial.html
 
-A good reference for Bayesian regression modeling is:
-Gelman, A., Carlin, J. B., Stern, H. S., Dunson, D. B., Vehtari, A., & Rubin, D. B. (2013). Bayesian data analysis. Chapman and Hall/CRC.
+A few good reference for Bayesian regression modeling are:
+
+Gelman, A., Carlin, J. B., Stern, H. S., Dunson, D. B., Vehtari, A., & Rubin, D. B. (2013). *Bayesian data analysis*. Chapman and Hall/CRC.
+
+Carlin, B. P., & Louis, T. A. (2008). *Bayesian methods for data analysis*. Chapman and Hall/CRC.
+
+McElreath, R. (2018). *Statistical rethinking: A Bayesian course with examples in R and Stan*. Chapman and Hall/CRC.
